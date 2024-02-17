@@ -4,6 +4,8 @@ import 'package:intl/intl.dart';
 import 'exam.dart';
 import 'firebase_options.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:table_calendar/table_calendar.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
 
 class ExamForm extends StatefulWidget {
@@ -73,11 +75,12 @@ class ExamFormState extends State<ExamForm> {
 
   @override
   Widget build(BuildContext context) {
-      String formatTimestamp(DateTime timestamp) {
-    String formattedDate = DateFormat('EEEE, d MM yyyy').format(timestamp);
-    String formattedTime = DateFormat('jm').format(timestamp);
-    return '$formattedDate $formattedTime';
-  }
+    String formatTimestamp(DateTime timestamp) {
+      String formattedDate = DateFormat('EEEE, d MM yyyy').format(timestamp);
+      String formattedTime = DateFormat('jm').format(timestamp);
+      return '$formattedDate $formattedTime';
+    }
+
     String? _subjectError;
 
     return Container(
@@ -163,11 +166,56 @@ class ExamFormState extends State<ExamForm> {
 }
 
 
+final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
+    FlutterLocalNotificationsPlugin();
+
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+
+const AndroidInitializationSettings initializationSettingsAndroid =
+    AndroidInitializationSettings('@mipmap/ic_launcher'); 
+
+  
+  var initializationSettings = InitializationSettings(
+      android: initializationSettingsAndroid);
+  
+  await flutterLocalNotificationsPlugin.initialize(initializationSettings);
+  
+  
   runApp(const MyApp());
 }
+
+
+Future<void> scheduleNotification(
+    FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin,
+    Exam exam,
+) async {
+  final DateTime now = DateTime.now();
+  final DateTime notificationTime = exam.timestamp.subtract(const Duration(days: 1));
+
+  if (notificationTime.isAfter(now)) {
+    const AndroidNotificationDetails androidPlatformChannelSpecifics =
+        AndroidNotificationDetails(
+      'exam_channel', 'Exam Notifications',
+      importance: Importance.max,
+      priority: Priority.high,
+      showWhen: false,
+    );
+    const NotificationDetails platformChannelSpecifics =
+        NotificationDetails(android: androidPlatformChannelSpecifics);
+
+    await flutterLocalNotificationsPlugin.schedule(
+      0,
+      'Upcoming Exam',
+      'You have an upcoming exam for ${exam.course} tomorrow!',
+      notificationTime,
+      platformChannelSpecifics,
+    );
+  }
+}
+
 
 class MyApp extends StatelessWidget {
   const MyApp({Key? key});
@@ -214,14 +262,36 @@ class MainListScreen extends StatefulWidget {
 class MainListScreenState extends State<MainListScreen> {
   final List<Exam> exams = [
     Exam(course: 'Kalkulus', timestamp: DateTime.now()),
-    Exam(course: 'Programiranje na video igri', timestamp: DateTime(2024, 02, 15)),
+    Exam(course: 'Maths', timestamp: DateTime.now()),
+    Exam(
+        course: 'Programiranje na video igri',
+        timestamp: DateTime(2024, 02, 25)),
+    Exam(course: 'Verojatnost', timestamp: DateTime(2024, 02, 25)),
     Exam(course: 'Diskretni strukturi', timestamp: DateTime(2024, 10, 02)),
     Exam(course: 'Algebra', timestamp: DateTime(2024, 05, 13)),
   ];
 
+  List<dynamic> _getEventsForDay(DateTime day) {
+    List<dynamic> events = [];
+
+    for (Exam exam in exams) {
+      if (day.year == exam.timestamp.year &&
+          day.month == exam.timestamp.month &&
+          day.day == exam.timestamp.day) {
+        events.add(exam);
+      }
+    }
+
+    return events;
+  }
+
+  CalendarFormat _calendarFormat = CalendarFormat.month;
+  RangeSelectionMode _rangeSelectionMode = RangeSelectionMode.disabled;
+
   @override
   Widget build(BuildContext context) {
     bool isLoggedIn = FirebaseAuth.instance.currentUser != null;
+    bool isDialogOpen = false;
 
     return Scaffold(
       appBar: AppBar(
@@ -247,59 +317,140 @@ class MainListScreenState extends State<MainListScreen> {
           ),
         ],
       ),
-      body: GridView.builder(
-        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: 2,
-          crossAxisSpacing: 2.0,
-          mainAxisSpacing: 2.0,
-        ),
-        itemCount: exams.length,
-        itemBuilder: (context, index) {
-          final course = exams[index].course;
-          final timestamp = exams[index].timestamp;
+      body: Column(
+        children: [
+          TableCalendar(
+            calendarFormat: _calendarFormat,
+            rangeSelectionMode: _rangeSelectionMode,
+            eventLoader: _getEventsForDay,
+            firstDay: DateTime.utc(
+                2022, 1, 1), 
+            lastDay: DateTime.utc(
+                2025, 12, 31), 
+            focusedDay: DateTime.now(),
+            onDaySelected: (selectedDay, focusedDay) {
+              print("Selected day: $selectedDay");
+              List<dynamic> examsonday = _getEventsForDay(selectedDay);
+              for (Exam exam in examsonday) {
+                print(" exams: ${exam.course} - ${exam.timestamp}");
 
-          return Card(
-            color: Colors.pink[100],
-            shape: RoundedRectangleBorder(
-              side: BorderSide(color: Colors.pink, width: 1),
-              borderRadius: BorderRadius.circular(8.0),
-            ),
-            child: Padding(
-              padding: const EdgeInsets.all(8.0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    course,
-                    style: const TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(height: 8.0),
-                  Text(
-                    formatTimestamp(timestamp),
-                    style: const TextStyle(color: Color.fromARGB(255, 59, 59, 59)),
-                  ),
-                  RichText(
-                    text: TextSpan(
-                      style: DefaultTextStyle.of(context).style,
-                      children: [
-                        const TextSpan(
-                          text: 'Time from now: ',
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            color: Color.fromARGB(255, 59, 59, 59),
+                
+
+                if (!isDialogOpen) {
+                  isDialogOpen = true;
+                  showDialog(
+                      context: context,
+                      builder: (BuildContext context) {
+                        return AlertDialog(
+                          title: Text(
+                              "Events for ${DateFormat('MMMM d, yyyy').format(selectedDay)}"),
+                          content: Column(
+                            children: examsonday.map((exam) {
+                              return ListTile(
+                                title: Text(exam.course),
+                                subtitle: Text(
+                                    DateFormat('jm').format(exam.timestamp)),
+                              );
+                            }).toList(),
                           ),
+                          actions: [
+                            ElevatedButton(
+                              onPressed: () {
+                                Navigator.of(context).pop();
+                                isDialogOpen = false;
+                              },
+                              child: Text("Close"),
+                            ),
+                          ],
+                        );
+                      });
+                }
+              }
+            },
+            calendarBuilders: CalendarBuilders(
+              markerBuilder: (context, day, events) {
+                if (events.isNotEmpty) {
+                  return Positioned(
+                    right: 1,
+                    bottom: 1,
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: Colors.pink,
+                        shape: BoxShape.circle,
+                      ),
+                      width: 16,
+                      height: 16,
+                      child: Center(
+                        child: Text(
+                          events.length.toString(),
+                          style: TextStyle(color: Colors.white),
                         ),
-                        TextSpan(
-                          text: '${calculateTimeFromNow(timestamp)}',
+                      ),
+                    ),
+                  );
+                }
+                return SizedBox.shrink();
+              },
+            ),
+          ),
+          Expanded(
+            child: GridView.builder(
+              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 2,
+                crossAxisSpacing: 2.0,
+                mainAxisSpacing: 2.0,
+              ),
+              itemCount: exams.length,
+              itemBuilder: (context, index) {
+                final course = exams[index].course;
+                final timestamp = exams[index].timestamp;
+
+                return Card(
+                  color: Colors.pink[100],
+                  shape: RoundedRectangleBorder(
+                    side: BorderSide(color: Colors.pink, width: 1),
+                    borderRadius: BorderRadius.circular(8.0),
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.all(8.0),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          course,
+                          style: const TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                        const SizedBox(height: 8.0),
+                        Text(
+                          formatTimestamp(timestamp),
+                          style: const TextStyle(
+                              color: Color.fromARGB(255, 59, 59, 59)),
+                        ),
+                        RichText(
+                          text: TextSpan(
+                            style: DefaultTextStyle.of(context).style,
+                            children: [
+                              const TextSpan(
+                                text: 'Time from now: ',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  color: Color.fromARGB(255, 59, 59, 59),
+                                ),
+                              ),
+                              TextSpan(
+                                text: '${calculateTimeFromNow(timestamp)}',
+                              ),
+                            ],
+                          ),
                         ),
                       ],
                     ),
                   ),
-                ],
-              ),
+                );
+              },
             ),
-          );
-        },
+          ),
+        ],
       ),
     );
   }
@@ -356,6 +507,7 @@ class MainListScreenState extends State<MainListScreen> {
     setState(() {
       exams.add(exam);
     });
+    scheduleNotification(flutterLocalNotificationsPlugin, exam);
   }
 }
 
@@ -382,8 +534,7 @@ class AuthScreenState extends State<AuthScreen> {
           email: emailInput.text,
           password: passwordInput.text,
         );
-        successDialog(
-            "Login Successful", "You have successfully logged in");
+        successDialog("Login Successful", "You have successfully logged in");
         HomeNavigation();
       } else {
         await _auth.createUserWithEmailAndPassword(
@@ -395,8 +546,7 @@ class AuthScreenState extends State<AuthScreen> {
         LoginNavigation();
       }
     } catch (e) {
-      errorDialog(
-          "Authentication Error", "Error: $e");
+      errorDialog("Authentication Error", "Error: $e");
     }
   }
 
