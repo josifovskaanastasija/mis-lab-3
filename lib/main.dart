@@ -6,6 +6,9 @@ import 'firebase_options.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:table_calendar/table_calendar.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:geolocator/geolocator.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'dart:math' as math;
 
 
 class ExamForm extends StatefulWidget {
@@ -20,6 +23,23 @@ class ExamForm extends StatefulWidget {
 class ExamFormState extends State<ExamForm> {
   final TextEditingController subjectController = TextEditingController();
   DateTime selectedDate = DateTime.now();
+  LatLng selectedLocation = LatLng(41.994883, 21.425322);
+
+  void openMapForLocationSelection(BuildContext context) async {
+    LatLng? pickedLocation = await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => LocationPickerMap(initialLocation: selectedLocation,),
+      ),
+    );
+
+    if (pickedLocation != null) {
+      setState(() {
+        selectedLocation = pickedLocation;
+      });
+    }
+  }
+  
 
   ElevatedButton buildStyledButton({
     required VoidCallback onPressed,
@@ -101,7 +121,7 @@ class ExamFormState extends State<ExamForm> {
                   borderSide: BorderSide(color: Colors.red),
                 ),
               ),
-            ),
+            ), 
             const SizedBox(height: 16),
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -128,6 +148,18 @@ class ExamFormState extends State<ExamForm> {
                 ),
               ],
             ),
+            const SizedBox(height: 16),  Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Text(
+          'Location: ${selectedLocation.latitude.toStringAsFixed(2)}, ${selectedLocation.longitude.toStringAsFixed(2)}',
+        ),
+        buildStyledButton(
+          buttonText: 'Select Location',
+          onPressed: () => openMapForLocationSelection(context),
+        ),
+      ],
+    ),
             const SizedBox(height: 32),
             ElevatedButton(
               onPressed: () {
@@ -143,6 +175,8 @@ class ExamFormState extends State<ExamForm> {
                   Exam exam = Exam(
                     course: subjectController.text,
                     timestamp: selectedDate,
+                    latitude: selectedLocation.latitude,
+                    longitude: selectedLocation.longitude
                   );
                   widget.addExam(exam);
                   Navigator.pop(context);
@@ -260,15 +294,14 @@ class MainListScreen extends StatefulWidget {
 }
 
 class MainListScreenState extends State<MainListScreen> {
+  GoogleMapController? _mapController;
   final List<Exam> exams = [
-    Exam(course: 'Kalkulus', timestamp: DateTime.now()),
-    Exam(course: 'Maths', timestamp: DateTime.now()),
-    Exam(
-        course: 'Programiranje na video igri',
-        timestamp: DateTime(2024, 02, 25)),
-    Exam(course: 'Verojatnost', timestamp: DateTime(2024, 02, 25)),
-    Exam(course: 'Diskretni strukturi', timestamp: DateTime(2024, 10, 02)),
-    Exam(course: 'Algebra', timestamp: DateTime(2024, 05, 13)),
+    Exam(course: 'Kalkulus', timestamp: DateTime.now(), latitude: 41.9846, longitude: 21.4302),
+Exam(course: 'Maths', timestamp: DateTime.now(), latitude: 42.0096, longitude: 21.3895),
+Exam(course: 'Programiranje na video igri', timestamp: DateTime(2024, 02, 25), latitude: 41.9641, longitude: 21.4455),
+    // Exam(course: 'Verojatnost', timestamp: DateTime(2024, 02, 25)),
+    // Exam(course: 'Diskretni strukturi', timestamp: DateTime(2024, 10, 02)),
+    // Exam(course: 'Algebra', timestamp: DateTime(2024, 05, 13)),
   ];
 
   List<dynamic> _getEventsForDay(DateTime day) {
@@ -293,6 +326,32 @@ class MainListScreenState extends State<MainListScreen> {
     bool isLoggedIn = FirebaseAuth.instance.currentUser != null;
     bool isDialogOpen = false;
 
+    void _openMapForExam(Exam exam) {
+  Navigator.push(
+    context,
+    MaterialPageRoute(
+      builder: (context) => LocationPickerMap(initialLocation: LatLng(exam.latitude, exam.longitude)),
+    ),
+  );
+}
+
+      Set<Marker> _getMarkers() {
+    return exams
+        .map(
+          (exam) => Marker(
+            markerId: MarkerId(exam.course),
+            position: LatLng(exam.latitude, exam.longitude),
+            infoWindow: InfoWindow(title: exam.course, onTap: () {
+              _openMapForExam(exam);
+            }),
+          ),
+        )
+        .toSet();
+  }
+
+
+
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('Anastasija Josifovska 193077'),
@@ -314,6 +373,19 @@ class MainListScreenState extends State<MainListScreen> {
                 ),
               ),
             ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.map),
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => MapScreen(
+                    markers: _getMarkers().toList(),
+                  ),
+                ),
+              );
+            },
           ),
         ],
       ),
@@ -443,6 +515,10 @@ class MainListScreenState extends State<MainListScreen> {
                             ],
                           ),
                         ),
+                        IconButton(
+              icon: Icon(Icons.map),
+              onPressed: () => _openMapForExam(exams[index]),
+            ),
                       ],
                     ),
                   ),
@@ -636,6 +712,120 @@ class AuthScreenState extends State<AuthScreen> {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+
+class MapScreen extends StatelessWidget {
+  final List<Marker> markers;
+
+  MapScreen({required this.markers});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('Exam Locations'),
+      ),
+      body: GoogleMap(
+        initialCameraPosition: calculateInitialCameraPosition(context),
+        markers: markers.toSet(),
+      ),
+    );
+  }
+
+  CameraPosition calculateInitialCameraPosition(BuildContext context) {
+    if (markers.isEmpty) {
+      return CameraPosition(
+        target: LatLng(37.7749, -122.4194),
+        zoom: 10.0,
+      );
+    }
+
+  double minLat = markers.first.position.latitude;
+  double maxLat = markers.first.position.latitude;
+  double minLng = markers.first.position.longitude;
+  double maxLng = markers.first.position.longitude;
+
+  for (Marker marker in markers) {
+    double lat = marker.position.latitude;
+    double lng = marker.position.longitude;
+
+    minLat = math.min(minLat, lat);
+    maxLat = math.max(maxLat, lat);
+    minLng = math.min(minLng, lng);
+    maxLng = math.max(maxLng, lng);
+  }
+
+  LatLng center = LatLng((minLat + maxLat) / 2, (minLng + maxLng) / 2);
+  double zoom = 12;
+
+  return CameraPosition(
+    target: center,
+    zoom: zoom,
+  );
+}
+
+
+}
+
+
+class LocationPickerMap extends StatefulWidget {
+  final LatLng initialLocation;
+
+  LocationPickerMap({required this.initialLocation});
+
+  @override
+  _LocationPickerMapState createState() => _LocationPickerMapState();
+}
+
+class _LocationPickerMapState extends State<LocationPickerMap> {
+  late GoogleMapController mapController;
+  LatLng pickedLocation = LatLng(41.994883, 21.425322); 
+
+  @override
+  void initState() {
+    super.initState();
+    pickedLocation = widget.initialLocation;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('Pick Location'),
+        actions: [
+          IconButton(
+            icon: Icon(Icons.check),
+            onPressed: () {
+              Navigator.pop(context, pickedLocation);
+            },
+          ),
+        ],
+      ),
+      body: GoogleMap(
+        onMapCreated: (controller) {
+          setState(() {
+            mapController = controller;
+          });
+        },
+        onTap: (latLng) {
+          setState(() {
+            pickedLocation = latLng;
+          });
+        },
+        initialCameraPosition: CameraPosition(
+          target: widget.initialLocation,
+          zoom: 15.0,
+        ),
+        markers: {
+          Marker(
+            markerId: MarkerId('pickedLocation'),
+            position: pickedLocation,
+          ),
+        },
       ),
     );
   }
